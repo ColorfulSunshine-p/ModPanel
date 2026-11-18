@@ -16,7 +16,8 @@ public class GenericColonAdapter implements ConfigAdapter {
         return new AdapterDescriptor("generic-colon", List.of(), List.of("txt"), null, null);
     }
     @Override public boolean supports(AdapterContext context) {
-        return Files.exists(Paths.get("config", context.getModId() + ".txt"));
+        return !com.modpanel.supported.SupportedMods.isHandled(context.getModId())
+                && Files.exists(Paths.get("config", context.getModId() + ".txt"));
     }
     @Override public DiscoveryResult discover(AdapterContext context) {
         return new DiscoveryResult(DiscoveryResult.Status.READ_ONLY, "Generic colon", new ArrayList<>());

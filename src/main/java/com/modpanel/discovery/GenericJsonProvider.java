@@ -13,11 +13,14 @@ import java.util.List;
 public class GenericJsonProvider implements DiscoveryProvider {
     @Override public String id() { return "generic-json"; }
     @Override public int priority() { return 5; }
-    @Override public boolean supports(String modId) { return Files.exists(Paths.get("config", modId + ".json")); }
+    @Override public boolean supports(String modId) {
+        return !com.modpanel.supported.SupportedMods.isHandled(modId)
+                && Files.exists(Paths.get("config", modId + ".json"));
+    }
     @Override public List<ConfigSource> discover(String modId, String version) {
         List<ConfigSource> out = new ArrayList<>();
         if (supports(modId)) {
-            out.add(new ConfigSource(modId, modId + ":json", "json", version, ConfigCapabilities.readOnly(), DiscoveryResult.Status.READ_ONLY, new ArrayList<>()));
+            out.add(new ConfigSource(modId, modId + ":json", "json", version, ConfigCapabilities.readOnly(), DiscoveryResult.Status.READ_ONLY, new ArrayList<>(), "config/" + modId + ".json"));
         }
         return out;
     }

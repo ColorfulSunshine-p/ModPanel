@@ -3,12 +3,12 @@
 	"id": "modpanel",
 	"version": "${version}",
 	"name": "ModPanel",
-	"description": "A universal configuration GUI that makes it easy to customize settings of other Minecraft mods.",
+	"description": "A configuration GUI that makes it easy to customize settings of other Minecraft mods.",
 	"authors": [
-		"ModPanel"
+		"Colorfulsunshine"
 	],
 	"contact": {},
-	"license": "MIT",
+	"license": "Apache-2.0",
 	"icon": "assets/modpanel/icon.png",
 	"environment": "client",
 	"entrypoints": {

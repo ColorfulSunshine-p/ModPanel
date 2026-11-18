@@ -12,6 +12,6 @@ public class ModMenuIntegration implements ModMenuApi {
 
 	@Override
 	public ConfigScreenFactory<Screen> getModConfigScreenFactory() {
-		return parent -> new ModPanelScreen();
+		return parent -> new ModPanelScreen(parent);
 	}
 }

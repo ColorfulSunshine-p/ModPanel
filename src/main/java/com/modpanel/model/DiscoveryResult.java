@@ -11,6 +11,9 @@ public record DiscoveryResult(
         SUPPORTED,
         PARTIAL,
         READ_ONLY,
+        NO_CONFIG,
+        UNSUPPORTED_FORMAT,
+        INCOMPATIBLE_VERSION,
         UNSUPPORTED,
         ERROR
     }

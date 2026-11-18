@@ -1,203 +1,158 @@
 package com.modpanel.adapter;
 
 import com.modpanel.compatibility.VersionMatcher;
-import com.modpanel.model.ApplyResult;
-import com.modpanel.model.ConfigCapabilities;
-import com.modpanel.model.ConfigChange;
-import com.modpanel.model.ConfigEntry;
-import com.modpanel.model.ConfigSection;
-import com.modpanel.model.ConfigSnapshot;
-import com.modpanel.model.ConfigSource;
-import com.modpanel.model.DiscoveryResult;
-import com.modpanel.model.ReloadRequirement;
-import com.modpanel.model.ResetResult;
-import com.modpanel.model.SettingMetadata;
-import com.modpanel.model.SettingType;
+import com.modpanel.model.*;
 import com.modpanel.validation.ValidationResult;
 
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
+import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
 import java.util.List;
 import java.util.Properties;
 
 public class LithiumAdapter implements ConfigAdapter {
-    @Override
-    public int priority() { return 100; }
+    public static final String DEFAULT_PATH = "config/lithium.properties";
+    private static final String MIN_VERSION = "0.15.0";
+    private static final String MAX_VERSION = "0.15.4";
+    private static final VersionMatcher VERSION_MATCHER = new VersionMatcher();
 
-    private static final String CONFIG_PATH = "config/lithium.properties";
-    private long lastReadMillis = 0L;
-    private static final VersionMatcher versionMatcher = new VersionMatcher();
+    private String fingerprint = "";
 
-    @Override
-    public AdapterDescriptor descriptor() {
-        return new AdapterDescriptor("lithium", List.of("lithium"), List.of("properties"), "0.0.0", null);
+    @Override public int priority() { return 100; }
+
+    @Override public AdapterDescriptor descriptor() {
+        return new AdapterDescriptor("lithium", List.of("lithium"), List.of("properties"), MIN_VERSION, MAX_VERSION);
     }
 
-    @Override
-    public boolean supports(AdapterContext context) {
-        return "lithium".equals(context.getModId()) && versionMatcher.matches(context.getModVersion(), "0.0.0", null);
+    @Override public boolean supports(AdapterContext context) {
+        return "lithium".equals(context.getModId())
+                && VERSION_MATCHER.matches(context.getModVersion(), MIN_VERSION, MAX_VERSION);
     }
 
-    @Override
-    public DiscoveryResult discover(AdapterContext context) {
-        return new DiscoveryResult(DiscoveryResult.Status.SUPPORTED, "OK", new ArrayList<>());
+    @Override public DiscoveryResult discover(AdapterContext context) {
+        return new DiscoveryResult(DiscoveryResult.Status.SUPPORTED, "Lithium " + context.getModVersion(), List.of());
     }
 
-    @Override
-    public ConfigSnapshot read(ConfigSource source) {
-        Properties defaults = new Properties();
-        try (InputStream in = LithiumAdapter.class.getResourceAsStream("/assets/modpanel/lithium-defaults.properties")) {
-            if (in != null) defaults.load(in);
-        } catch (Exception ignored) { }
-
+    @Override public ConfigSnapshot read(ConfigSource source) {
+        Path path = pathOf(source);
+        Properties defaults = loadDefaults();
         Properties user = new Properties();
-        Path path = Paths.get(CONFIG_PATH);
         if (Files.exists(path)) {
-            try (FileInputStream fis = new FileInputStream(path.toFile())) {
-                user.load(fis);
-            } catch (Exception ignored) { }
-            try { lastReadMillis = Files.getLastModifiedTime(path).toMillis(); } catch (Exception ignored) { }
-        } else {
-            lastReadMillis = 0L;
+            try (InputStream in = Files.newInputStream(path)) { user.load(in); }
+            catch (Exception ignored) { }
         }
+        fingerprint = fingerprint(path);
 
-        List<ConfigEntry> entries = new ArrayList<>();
-        // defaults
+        List<ConfigEntry> entries = new java.util.ArrayList<>();
         for (String key : defaults.stringPropertyNames()) {
-            String defaultVal = defaults.getProperty(key, "true");
-            String currentVal = user.getProperty(key, defaultVal);
-            boolean bool = "true".equalsIgnoreCase(currentVal);
-            ConfigCapabilities caps = source.getCapabilities();
-            entries.add(new ConfigEntry(
-                    "lithium:" + key,
-                    source.getSourceId(),
-                    source.getModId(),
-                    key,
-                    SettingType.BOOLEAN,
-                    bool,
-                    "true".equalsIgnoreCase(defaultVal),
-                    new SettingMetadata(key, null, key.split("\\.")[0], null, true, false, false),
-                    null,
-                    null,
-                    null,
-                    caps
-            ));
+            String def = defaults.getProperty(key, "true");
+            String cur = user.getProperty(key, def);
+            entries.add(entry(source, key, "true".equalsIgnoreCase(cur), "true".equalsIgnoreCase(def), true));
         }
-        // extra user keys
         for (String key : user.stringPropertyNames()) {
             if (defaults.containsKey(key)) continue;
             String val = user.getProperty(key);
-            SettingType type = ("true".equalsIgnoreCase(val) || "false".equalsIgnoreCase(val)) ? SettingType.BOOLEAN : SettingType.STRING;
-            Object current = type == SettingType.BOOLEAN ? Boolean.parseBoolean(val) : val;
-            ConfigCapabilities caps = source.getCapabilities();
-            entries.add(new ConfigEntry(
-                    "lithium:" + key,
-                    source.getSourceId(),
-                    source.getModId(),
-                    key,
-                    type,
-                    current,
-                    null,
-                    new SettingMetadata(key, null, key.split("\\.")[0], null, true, false, false),
-                    null,
-                    null,
-                    null,
-                    caps
-            ));
+            boolean bool = "true".equalsIgnoreCase(val) || "false".equalsIgnoreCase(val);
+            entries.add(entry(source, key, bool ? Boolean.parseBoolean(val) : val, null, false));
         }
-
-        return new ConfigSnapshot(source, new ArrayList<>(), entries);
+        return new ConfigSnapshot(source, List.of(), entries);
     }
 
-    @Override
-    public ValidationResult validate(ConfigEntry entry, Object value) {
-        if (entry.getType() == SettingType.BOOLEAN) {
-            if (!(value instanceof Boolean)) return ValidationResult.fail("Expected boolean");
-            return ValidationResult.ok();
-        }
-        return ValidationResult.ok();
+    @Override public ValidationResult validate(ConfigEntry entry, Object value) {
+        if (entry.getType() != SettingType.BOOLEAN) return ValidationResult.fail("Expected boolean");
+        return value instanceof Boolean ? ValidationResult.ok() : ValidationResult.fail("Expected boolean");
     }
 
-    @Override
-    public ApplyResult apply(ConfigSource source, List<ConfigChange> changes) {
-        Path path = Paths.get(CONFIG_PATH);
+    @Override public ApplyResult apply(ConfigSource source, List<ConfigChange> changes) {
+        Path path = pathOf(source);
         try {
-            // conflict detection
-            if (Files.exists(path)) {
-                long now = Files.getLastModifiedTime(path).toMillis();
-                if (lastReadMillis > 0 && now > lastReadMillis) {
-                    return new ApplyResult(false, "Conflict: file changed externally since read");
-                }
+            if (Files.exists(path) && !fingerprint.equals(fingerprint(path))) {
+                return new ApplyResult(false, "Conflict: file changed externally since it was read", null, ReloadRequirement.none(), true);
             }
-            Files.createDirectories(path.getParent());
-            Properties props = new Properties();
-            if (Files.exists(path)) {
-                try (FileInputStream fis = new FileInputStream(path.toFile())) {
-                    props.load(fis);
-                }
-            }
-            for (ConfigChange c : changes) {
-                String key = c.entryId();
-                if (key.startsWith("lithium:")) key = key.substring("lithium:".length());
-                props.setProperty(key, String.valueOf(c.proposedValue()));
-            }
-            // backup
-            new com.modpanel.persistence.BackupService().backup(source.getSourceId(), path);
-            // atomic write
-            Path tmp = path.resolveSibling(path.getFileName().toString() + ".tmp");
-            try (FileOutputStream fos = new FileOutputStream(tmp.toFile())) {
-                props.store(fos, "ModPanel generated overrides");
-            }
-            try {
-                Files.move(tmp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            } catch (Exception e) {
-                Files.move(tmp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            }
-            try { lastReadMillis = Files.getLastModifiedTime(path).toMillis(); } catch (Exception ignored) { }
+            Properties props = load(path);
+            for (ConfigChange c : changes) props.setProperty(key(c.entryId()), String.valueOf(c.proposedValue()));
+            writeAtomic(path, props);
+            fingerprint = fingerprint(path);
             return new ApplyResult(true, "Saved");
         } catch (Exception e) {
             return new ApplyResult(false, e.getMessage());
         }
     }
 
-    @Override
-    public ResetResult resetToDefault(ConfigSource source, List<String> entryIds) {
-        Path path = Paths.get(CONFIG_PATH);
+    @Override public ResetResult resetToDefault(ConfigSource source, List<String> entryIds) {
+        Path path = pathOf(source);
         try {
-            Properties props = new Properties();
-            if (Files.exists(path)) {
-                try (FileInputStream fis = new FileInputStream(path.toFile())) {
-                    props.load(fis);
-                }
-            }
-            for (String id : entryIds) {
-                String key = id.startsWith("lithium:") ? id.substring("lithium:".length()) : id;
-                props.remove(key);
-            }
-            Files.createDirectories(path.getParent());
-            Path tmp = path.resolveSibling(path.getFileName().toString() + ".tmp");
-            try (FileOutputStream fos = new FileOutputStream(tmp.toFile())) {
-                props.store(fos, "ModPanel generated overrides");
-            }
-            try {
-                Files.move(tmp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            } catch (Exception e) {
-                Files.move(tmp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            }
-            try { lastReadMillis = Files.getLastModifiedTime(path).toMillis(); } catch (Exception ignored) { }
+            Properties props = load(path);
+            for (String id : entryIds) props.remove(key(id));
+            writeAtomic(path, props);
+            fingerprint = fingerprint(path);
             return new ResetResult(true, "Reset to default");
         } catch (Exception e) {
             return new ResetResult(false, e.getMessage());
         }
     }
 
-    @Override
-    public ReloadRequirement reloadRequirement(ConfigSource source, List<ConfigChange> changes) {
+    @Override public ReloadRequirement reloadRequirement(ConfigSource source, List<ConfigChange> changes) {
         return new ReloadRequirement(true, "Lithium settings require a game restart");
+    }
+
+    private ConfigEntry entry(ConfigSource source, String key, Object current, Object def, boolean known) {
+        String path = key.startsWith("mixin.") ? key.substring("mixin.".length()) : key;
+        String[] parts = path.split("\\.");
+        String label = parts[parts.length - 1].replace('_', ' ');
+        String category = String.join(".", java.util.Arrays.copyOf(parts, Math.max(parts.length - 1, 1)));
+        ConfigCapabilities caps = known ? source.getCapabilities() : ConfigCapabilities.readOnly();
+        return new ConfigEntry("lithium:" + key, source.getSourceId(), source.getModId(), key,
+                SettingType.BOOLEAN, current, def,
+                new SettingMetadata(label, null, category, null, true, !known, false),
+                null, null, null, caps);
+    }
+
+    private static String key(String entryId) {
+        return entryId.startsWith("lithium:") ? entryId.substring("lithium:".length()) : entryId;
+    }
+
+    private static Path pathOf(ConfigSource source) {
+        Path p = Paths.get(source.getLocation());
+        return Files.exists(p) ? p : Paths.get(DEFAULT_PATH);
+    }
+
+    private static Properties loadDefaults() {
+        Properties defaults = new Properties();
+        try (InputStream in = LithiumAdapter.class.getResourceAsStream("/assets/modpanel/lithium-defaults.properties")) {
+            if (in != null) defaults.load(in);
+        } catch (Exception ignored) { }
+        return defaults;
+    }
+
+    private static Properties load(Path path) throws Exception {
+        Properties props = new Properties();
+        if (Files.exists(path)) try (InputStream in = Files.newInputStream(path)) { props.load(in); }
+        return props;
+    }
+
+    private static void writeAtomic(Path path, Properties props) throws Exception {
+        Files.createDirectories(path.getParent());
+        Path tmp = path.resolveSibling(path.getFileName() + ".tmp");
+        try (OutputStream out = Files.newOutputStream(tmp)) { props.store(out, "ModPanel generated overrides"); }
+        try {
+            Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (Exception e) {
+            Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static String fingerprint(Path path) {
+        try {
+            if (!Files.exists(path)) return "";
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path));
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (Exception e) {
+            return "";
+        }
     }
 }

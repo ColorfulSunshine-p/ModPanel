@@ -20,7 +20,7 @@ public class BackupService {
     public Path backup(String sourceId, Path sourcePath) {
         try {
             if (sourcePath == null || !Files.exists(sourcePath)) return null;
-            Path dir = Paths.get("config", "modpanel-backups");
+            Path dir = backupDir();
             Files.createDirectories(dir);
             String safe = sourceId.replaceAll("[^a-zA-Z0-9._-]", "_");
             Path backup = dir.resolve(safe + "_" + LocalDateTime.now().format(FMT) + ".bak");
@@ -30,6 +30,14 @@ public class BackupService {
         } catch (IOException e) {
             ModPanel.LOGGER.warn("Backup failed for {}", sourceId, e);
             return null;
+        }
+    }
+
+    private static Path backupDir() {
+        try {
+            return net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir().resolve("modpanel-backups");
+        } catch (Throwable t) {
+            return Paths.get("config", "modpanel-backups");
         }
     }
 

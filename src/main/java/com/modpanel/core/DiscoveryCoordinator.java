@@ -29,8 +29,12 @@ public class DiscoveryCoordinator {
         if (cache.containsKey(key)) return new ArrayList<>(cache.get(key));
         List<ConfigSource> out = new ArrayList<>();
         for (DiscoveryProvider p : providers) {
-            if (p.supports(modId)) {
+            if (!p.supports(modId)) continue;
+            try {
                 out.addAll(p.discover(modId, version));
+            } catch (Throwable t) {
+                com.modpanel.diagnostics.Diagnostics.report(com.modpanel.diagnostics.ErrorCategory.DISCOVERY,
+                        "Discovery failed for " + modId + " via " + p.id(), t);
             }
         }
         cache.put(key, new ArrayList<>(out));
@@ -41,10 +45,18 @@ public class DiscoveryCoordinator {
         cache.keySet().removeIf(k -> k.startsWith(modId + "@"));
     }
 
+    public void invalidateAll() {
+        cache.clear();
+    }
+
     public DiscoveryResult probe(String modId, String version) {
         for (DiscoveryProvider p : providers) {
-            if (p.supports(modId)) {
+            if (!p.supports(modId)) continue;
+            try {
                 return p.probe(modId, version);
+            } catch (Throwable t) {
+                com.modpanel.diagnostics.Diagnostics.report(com.modpanel.diagnostics.ErrorCategory.DISCOVERY,
+                        "Probe failed for " + modId + " via " + p.id(), t);
             }
         }
         return new DiscoveryResult(DiscoveryResult.Status.UNSUPPORTED, "No provider", new ArrayList<>());

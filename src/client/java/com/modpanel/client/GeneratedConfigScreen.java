@@ -1,13 +1,12 @@
 package com.modpanel.client;
 
 import com.modpanel.ModPanel;
+import com.modpanel.adapter.AdapterContext;
 import com.modpanel.adapter.ConfigAdapter;
 import com.modpanel.core.ApplyCoordinator;
 import com.modpanel.core.ChangeSet;
 import com.modpanel.model.ConfigEntry;
-import com.modpanel.model.ConfigSnapshot;
 import com.modpanel.model.ConfigSource;
-import com.modpanel.model.SettingType;
 
 import me.shedaniel.clothconfig2.api.ConfigBuilder;
 import me.shedaniel.clothconfig2.api.ConfigCategory;
@@ -20,14 +19,21 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 public class GeneratedConfigScreen extends Screen {
     private final String modId;
+    private final Screen parentScreen;
     private boolean delegated = false;
 
     public GeneratedConfigScreen(String modId) {
+        this(modId, null);
+    }
+
+    public GeneratedConfigScreen(String modId, Screen parent) {
         super(Component.literal("ModPanel - " + modId));
         this.modId = modId;
+        this.parentScreen = parent;
     }
 
     @Override
@@ -36,144 +42,147 @@ public class GeneratedConfigScreen extends Screen {
         if (delegated) return;
         delegated = true;
 
-        List<ConfigSource> discovered = ModPanel.DISCOVERY.discoverMod(modId, ModPanel.MOD_REGISTRY.getVersion(modId));
-        final ConfigSource source = discovered.isEmpty() ? null : discovered.get(0);
-        if (source == null) {
-            minecraft.setScreen(new ModPanelScreen());
+        List<ConfigSource> sources = ModPanel.DISCOVERY.discoverMod(modId, ModPanel.MOD_REGISTRY.getVersion(modId));
+        if (sources.isEmpty()) {
+            minecraft.setScreen(parentScreen != null ? parentScreen : new ModPanelScreen());
             return;
         }
 
-        ConfigAdapter selected = ModPanel.ADAPTER_MANAGER.select(new com.modpanel.adapter.AdapterContext(modId, ModPanel.MOD_REGISTRY.getVersion(modId), "1.21.1"));
-        final ConfigAdapter adapter = selected == null ? new com.modpanel.adapter.LithiumAdapter() : selected;
+        AdapterContext context = new AdapterContext(modId, ModPanel.MOD_REGISTRY.getVersion(modId), "1.21.1");
+        Map<ConfigSource, ConfigAdapter> adapters = new LinkedHashMap<>();
+        Map<String, List<ConfigEntry>> entriesBySource = new LinkedHashMap<>();
+        Map<String, ChangeSet> changeSets = new LinkedHashMap<>();
+        Map<String, List<ConfigEntry>> grouped = new LinkedHashMap<>();
+        boolean writable = false;
 
-        final ConfigSnapshot snapshot = adapter.read(source);
-        ModPanel.CONFIG_REGISTRY.register(snapshot);
-
-        final ChangeSet changeSet = new ChangeSet(source.getSourceId());
+        for (ConfigSource source : sources) {
+            ConfigAdapter adapter = ModPanel.ADAPTER_MANAGER.select(context);
+            if (adapter == null) continue;
+            adapters.put(source, adapter);
+            changeSets.put(source.getSourceId(), new ChangeSet(source.getSourceId()));
+            List<ConfigEntry> entries = adapter.read(source).entries();
+            entriesBySource.put(source.getSourceId(), entries);
+            writable |= source.getCapabilities().write();
+            for (ConfigEntry e : entries) grouped.computeIfAbsent(category(e), k -> new ArrayList<>()).add(e);
+        }
 
         ConfigBuilder builder = ConfigBuilder.create();
-        builder.setParentScreen(this);
+        builder.setParentScreen(parentScreen != null ? parentScreen : new ModPanelScreen());
         builder.setTitle(Component.literal(modId + " settings"));
-        if (source.getCapabilities().write()) {
-            builder.setSavingRunnable(() -> {
-                new ApplyCoordinator().apply(adapter, source, changeSet, snapshot.entries());
+        builder.setEditable(writable);
+        builder.setDoesConfirmSave(true);
+        if (writable) builder.setSavingRunnable(() -> {
+            ApplyCoordinator coordinator = new ApplyCoordinator();
+            adapters.forEach((source, adapter) -> {
+                if (!source.getCapabilities().write()) return;
+                coordinator.apply(adapter, source, changeSets.get(source.getSourceId()),
+                        entriesBySource.getOrDefault(source.getSourceId(), List.of()));
             });
-        } else {
-            builder.setEditable(false);
-        }
-
-        // group entries by category
-        Map<String, List<ConfigEntry>> grouped = new LinkedHashMap<>();
-        for (ConfigEntry e : snapshot.entries()) {
-            String cat = e.getMetadata().category();
-            if (cat == null || cat.isBlank()) cat = "Settings";
-            grouped.computeIfAbsent(cat, k -> new ArrayList<>()).add(e);
-        }
+        });
 
         ConfigEntryBuilder eb = builder.entryBuilder();
-        for (Map.Entry<String, List<ConfigEntry>> g : grouped.entrySet()) {
-            ConfigCategory category = builder.getOrCreateCategory(Component.literal(g.getKey()));
-            for (ConfigEntry entry : g.getValue()) {
-                addControl(category, eb, entry, changeSet, adapter);
-            }
-            // restart notice
-            if (entryRestartRequired(g.getValue())) {
-                category.addEntry(eb.startTextDescription(Component.literal("Restart required for changes")).build());
+        for (Map.Entry<String, List<ConfigEntry>> group : grouped.entrySet()) {
+            ConfigCategory category = builder.getOrCreateCategory(Component.literal(group.getKey()));
+            for (ConfigEntry entry : group.getValue()) addControl(category, eb, entry, changeSets);
+            if (group.getValue().stream().anyMatch(e -> e.getMetadata().restartRequired())) {
+                category.addEntry(eb.startTextDescription(Component.literal("Restart required for changes in this category")).build());
             }
         }
 
-        Screen built = builder.build();
-        minecraft.setScreen(built);
+        if (grouped.isEmpty()) {
+            ConfigCategory empty = builder.getOrCreateCategory(Component.literal("No settings"));
+            String reason = sources.stream().flatMap(s -> s.getWarnings().stream()).findFirst().orElse(
+                    "No supported configuration was found for " + modId);
+            empty.addEntry(eb.startTextDescription(Component.literal(reason)).build());
+        }
+
+        ConfigCategory status = builder.getOrCreateCategory(Component.literal("Status"));
+        for (ConfigSource source : sources) {
+            status.addEntry(eb.startTextDescription(Component.literal(
+                    source.getSourceId() + " - " + source.getStatus()
+                            + (source.getCapabilities().write() ? " (editable)" : " (read-only)")
+                            + " - " + source.getLocation())).build());
+            for (String warning : source.getWarnings()) {
+                status.addEntry(eb.startTextDescription(Component.literal(warning)).build());
+            }
+        }
+        for (var diagnostic : com.modpanel.diagnostics.Diagnostics.entries()) {
+            status.addEntry(eb.startTextDescription(Component.literal(
+                    diagnostic.category() + ": " + diagnostic.message())).build());
+        }
+
+        minecraft.setScreen(builder.build());
     }
 
-    private boolean entryRestartRequired(List<ConfigEntry> entries) {
-        for (ConfigEntry e : entries) if (e.getMetadata().restartRequired()) return true;
-        return false;
+    private static String category(ConfigEntry entry) {
+        String cat = entry.getMetadata().category();
+        return cat == null || cat.isBlank() ? "General" : cat;
     }
 
-    private void addControl(ConfigCategory category, ConfigEntryBuilder eb, ConfigEntry entry, ChangeSet changeSet, ConfigAdapter adapter) {
+    private void addControl(ConfigCategory category, ConfigEntryBuilder eb, ConfigEntry entry, Map<String, ChangeSet> changeSets) {
         String label = entry.getMetadata().label() != null ? entry.getMetadata().label() : entry.getKey();
         Component comp = Component.literal(label);
+        ChangeSet changeSet = changeSets.get(entry.getSourceId());
+        boolean readOnly = entry.getMetadata().readOnly() || !entry.getCapabilities().write();
+
+        if (readOnly) {
+            category.addEntry(eb.startTextDescription(Component.literal(label + ": " + entry.getCurrentValue()
+                    + " (read-only)")).build());
+            return;
+        }
+
         switch (entry.getType()) {
-            case BOOLEAN: {
-                boolean val = Boolean.TRUE.equals(entry.getCurrentValue());
-                category.addEntry(eb.startBooleanToggle(comp, val)
-                        .setDefaultValue(() -> Boolean.TRUE.equals(entry.getDefaultValue()))
-                        .setErrorSupplier(v -> adapter.validate(entry, v).valid() ? java.util.Optional.empty() : java.util.Optional.of(Component.literal(adapter.validate(entry, v).message())))
-                        .setErrorSupplier(v -> adapter.validate(entry, v).valid() ? java.util.Optional.empty() : java.util.Optional.of(Component.literal(adapter.validate(entry, v).message())))
-                        .setSaveConsumer(v -> { entry.setCurrentValue(v); changeSet.stage(entry, v); })
-                        .build());
-                break;
+            case BOOLEAN -> category.addEntry(eb.startBooleanToggle(comp, Boolean.TRUE.equals(entry.getCurrentValue()))
+                    .setDefaultValue(() -> Boolean.TRUE.equals(entry.getDefaultValue()))
+                    .setErrorSupplier(v -> error(entry, v))
+                    .setSaveConsumer(v -> { entry.setCurrentValue(v); stage(changeSet, entry, v); })
+                    .build());
+            case INTEGER -> {
+                var field = eb.startIntField(comp, number(entry).intValue())
+                        .setDefaultValue(() -> entry.getDefaultValue() instanceof Number ? ((Number) entry.getDefaultValue()).intValue() : number(entry).intValue())
+                        .setErrorSupplier(v -> error(entry, v))
+                        .setSaveConsumer(v -> { entry.setCurrentValue(v); stage(changeSet, entry, v); });
+                if (entry.getMinValue() instanceof Number min) field.setMin(min.intValue());
+                if (entry.getMaxValue() instanceof Number max) field.setMax(max.intValue());
+                category.addEntry(field.build());
             }
-            case INTEGER: {
-                int val = entry.getCurrentValue() instanceof Number ? ((Number) entry.getCurrentValue()).intValue() : 0;
-                if (entry.getMinValue() instanceof Number && entry.getMaxValue() instanceof Number) {
-                    category.addEntry(eb.startIntSlider(comp,
-                            val,
-                            ((Number) entry.getMinValue()).intValue(),
-                            ((Number) entry.getMaxValue()).intValue())
-                            .setDefaultValue(() -> entry.getDefaultValue() instanceof Number ? ((Number) entry.getDefaultValue()).intValue() : val)
-                            .setErrorSupplier(v -> adapter.validate(entry, v).valid() ? java.util.Optional.empty() : java.util.Optional.of(Component.literal(adapter.validate(entry, v).message())))
-                        .setSaveConsumer(v -> { entry.setCurrentValue(v); changeSet.stage(entry, v); })
-                            .build());
-                } else {
-                    category.addEntry(eb.startIntField(comp, val)
-                            .setDefaultValue(() -> entry.getDefaultValue() instanceof Number ? ((Number) entry.getDefaultValue()).intValue() : val)
-                            .setErrorSupplier(v -> adapter.validate(entry, v).valid() ? java.util.Optional.empty() : java.util.Optional.of(Component.literal(adapter.validate(entry, v).message())))
-                        .setSaveConsumer(v -> { entry.setCurrentValue(v); changeSet.stage(entry, v); })
-                            .build());
-                }
-                break;
+            case DECIMAL -> {
+                var field = eb.startDoubleField(comp, number(entry).doubleValue())
+                        .setDefaultValue(() -> entry.getDefaultValue() instanceof Number ? ((Number) entry.getDefaultValue()).doubleValue() : number(entry).doubleValue())
+                        .setErrorSupplier(v -> error(entry, v))
+                        .setSaveConsumer(v -> { entry.setCurrentValue(v); stage(changeSet, entry, v); });
+                if (entry.getMinValue() instanceof Number min) field.setMin(min.doubleValue());
+                if (entry.getMaxValue() instanceof Number max) field.setMax(max.doubleValue());
+                category.addEntry(field.build());
             }
-            case DECIMAL: {
-                double val = entry.getCurrentValue() instanceof Number ? ((Number) entry.getCurrentValue()).doubleValue() : 0.0;
-                if (entry.getMinValue() instanceof Number && entry.getMaxValue() instanceof Number) {
-                    category.addEntry(eb.startDoubleField(comp, val)
-                            .setDefaultValue(() -> entry.getDefaultValue() instanceof Number ? ((Number) entry.getDefaultValue()).doubleValue() : val)
-                            .setErrorSupplier(v -> adapter.validate(entry, v).valid() ? java.util.Optional.empty() : java.util.Optional.of(Component.literal(adapter.validate(entry, v).message())))
-                        .setSaveConsumer(v -> { entry.setCurrentValue(v); changeSet.stage(entry, v); })
-                            .build());
-                } else {
-                    category.addEntry(eb.startDoubleField(comp, val)
-                            .setDefaultValue(() -> entry.getDefaultValue() instanceof Number ? ((Number) entry.getDefaultValue()).doubleValue() : val)
-                            .setErrorSupplier(v -> adapter.validate(entry, v).valid() ? java.util.Optional.empty() : java.util.Optional.of(Component.literal(adapter.validate(entry, v).message())))
-                        .setSaveConsumer(v -> { entry.setCurrentValue(v); changeSet.stage(entry, v); })
-                            .build());
-                }
-                break;
-            }
-            case ENUM:
-            case STRING: {
+            case ENUM, STRING -> {
                 if (entry.getChoices() != null && !entry.getChoices().isEmpty()) {
-                    // use selector with choices as strings
                     String[] opts = entry.getChoices().stream().map(String::valueOf).toArray(String[]::new);
-                    String cur = String.valueOf(entry.getCurrentValue());
-                    category.addEntry(eb.startSelector(comp, opts, cur)
-                            .setErrorSupplier(v -> adapter.validate(entry, v).valid() ? java.util.Optional.empty() : java.util.Optional.of(Component.literal(adapter.validate(entry, v).message())))
-                        .setSaveConsumer(v -> { entry.setCurrentValue(v); changeSet.stage(entry, v); })
+                    category.addEntry(eb.startSelector(comp, opts, String.valueOf(entry.getCurrentValue()))
+                            .setErrorSupplier(v -> error(entry, v))
+                            .setSaveConsumer(v -> { entry.setCurrentValue(v); stage(changeSet, entry, v); })
                             .build());
                 } else {
-                    String val = String.valueOf(entry.getCurrentValue());
-                    category.addEntry(eb.startStrField(comp, val)
-                            .setErrorSupplier(v -> adapter.validate(entry, v).valid() ? java.util.Optional.empty() : java.util.Optional.of(Component.literal(adapter.validate(entry, v).message())))
-                        .setSaveConsumer(v -> { entry.setCurrentValue(v); changeSet.stage(entry, v); })
+                    category.addEntry(eb.startStrField(comp, String.valueOf(entry.getCurrentValue()))
+                            .setErrorSupplier(v -> error(entry, v))
+                            .setSaveConsumer(v -> { entry.setCurrentValue(v); stage(changeSet, entry, v); })
                             .build());
                 }
-                break;
             }
-            case COLLECTION: {
-                String val = entry.getCurrentValue() == null ? "" : String.valueOf(entry.getCurrentValue());
-                category.addEntry(eb.startTextDescription(Component.literal(label + ": " + val + " (read-only)")).build());
-                break;
-            }
-            default: {
-                String val = entry.getCurrentValue() == null ? "" : String.valueOf(entry.getCurrentValue());
-                category.addEntry(eb.startTextDescription(Component.literal(label + ": " + val)).build());
-                break;
-            }
+            default -> category.addEntry(eb.startTextDescription(Component.literal(label + ": " + entry.getCurrentValue())).build());
         }
-        if (entry.getMetadata().description() != null) {
-            // description already not easily attached; skip
-        }
+    }
+
+    private static void stage(ChangeSet changeSet, ConfigEntry entry, Object value) {
+        if (changeSet != null) changeSet.stage(entry, value);
+    }
+
+    private static Number number(ConfigEntry entry) {
+        return entry.getCurrentValue() instanceof Number n ? n : 0;
+    }
+
+    private static Optional<Component> error(ConfigEntry entry, Object value) {
+        var result = new com.modpanel.validation.DefaultValidator().validate(entry, value);
+        return result.valid() ? Optional.empty() : Optional.of(Component.literal(result.message()));
     }
 }

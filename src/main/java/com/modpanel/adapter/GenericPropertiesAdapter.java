@@ -31,8 +31,8 @@ public class GenericPropertiesAdapter implements ConfigAdapter {
 
     @Override
     public boolean supports(AdapterContext context) {
-        Path p = Paths.get("config", context.getModId() + ".properties");
-        return Files.exists(p);
+        return !com.modpanel.supported.SupportedMods.isHandled(context.getModId())
+                && Files.exists(Paths.get("config", context.getModId() + ".properties"));
     }
 
     @Override

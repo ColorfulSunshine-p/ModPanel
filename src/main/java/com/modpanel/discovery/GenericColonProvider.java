@@ -13,11 +13,14 @@ import java.util.List;
 public class GenericColonProvider implements DiscoveryProvider {
     @Override public String id() { return "generic-colon"; }
     @Override public int priority() { return 5; }
-    @Override public boolean supports(String modId) { return Files.exists(Paths.get("config", modId + ".txt")); }
+    @Override public boolean supports(String modId) {
+        return !com.modpanel.supported.SupportedMods.isHandled(modId)
+                && Files.exists(Paths.get("config", modId + ".txt"));
+    }
     @Override public List<ConfigSource> discover(String modId, String version) {
         List<ConfigSource> out = new ArrayList<>();
         if (supports(modId)) {
-            out.add(new ConfigSource(modId, modId + ":txt", "txt", version, ConfigCapabilities.readOnly(), DiscoveryResult.Status.READ_ONLY, new ArrayList<>()));
+            out.add(new ConfigSource(modId, modId + ":txt", "txt", version, ConfigCapabilities.readOnly(), DiscoveryResult.Status.READ_ONLY, new ArrayList<>(), "config/" + modId + ".txt"));
         }
         return out;
     }

@@ -42,4 +42,6 @@ public class ChangeSet {
         original.clear();
         dirty = false;
     }
+
+    public void discard() { clear(); }
 }

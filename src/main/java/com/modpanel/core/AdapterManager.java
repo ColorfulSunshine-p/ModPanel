@@ -1,7 +1,7 @@
 package com.modpanel.core;
 
+import com.modpanel.ModPanel;
 import com.modpanel.adapter.AdapterContext;
-import com.modpanel.adapter.AdapterDescriptor;
 import com.modpanel.adapter.ConfigAdapter;
 
 import java.util.ArrayList;
@@ -22,9 +22,20 @@ public class AdapterManager {
     public ConfigAdapter select(AdapterContext context) {
         List<ConfigAdapter> candidates = new ArrayList<>();
         for (ConfigAdapter a : adapters) {
-            if (a.supports(context)) candidates.add(a);
+            try {
+                if (a.supports(context)) candidates.add(a);
+            } catch (Throwable t) {
+                ModPanel.LOGGER.warn("Adapter {} failed to support {}", a.descriptor().id(), context.getModId(), t);
+            }
         }
+        if (candidates.isEmpty()) return null;
         candidates.sort(Comparator.comparingInt(ConfigAdapter::priority).reversed());
-        return candidates.isEmpty() ? null : candidates.get(0);
+        ConfigAdapter chosen = candidates.get(0);
+        List<String> ids = candidates.stream().map(a -> a.descriptor().id()).toList();
+        if (candidates.size() > 1 && candidates.get(1).priority() == chosen.priority()) {
+            ModPanel.LOGGER.warn("Ambiguous adapters for {}: {}", context.getModId(), ids);
+        }
+        ModPanel.LOGGER.info("Selected adapter {} for {} (candidates: {})", chosen.descriptor().id(), context.getModId(), ids);
+        return chosen;
     }
 }

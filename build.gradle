@@ -39,6 +39,14 @@ dependencies {
 	// Cloth Config API (required, from LIBS)
 	modImplementation files("${libsDir}/cloth-config-15.0.140-fabric.jar")
 
+	// Cloth Config transitive math library (required at runtime; bundled inside cloth-config jar)
+	implementation files("${libsDir}/basic-math-0.6.1.jar")
+
+	// JSON/TOML parsing libraries (from LIBS)
+	implementation files("${libsDir}/gson-2.10.1.jar")
+	implementation files("${libsDir}/night-config-core-3.8.3.jar")
+	implementation files("${libsDir}/night-config-toml-3.8.3.jar")
+
 	// Text Placeholder API (optional, from LIBS)
 	modCompileOnly files("${libsDir}/placeholder-api-2.4.2+1.21.jar")
 	modRuntimeOnly files("${libsDir}/placeholder-api-2.4.2+1.21.jar")

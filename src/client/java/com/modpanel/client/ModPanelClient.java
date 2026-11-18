@@ -27,7 +27,14 @@ public class ModPanelClient implements ClientModInitializer {
 		com.modpanel.ModPanel.DISCOVERY.registerProvider(new com.modpanel.discovery.JsonProvider());
 		com.modpanel.ModPanel.DISCOVERY.registerProvider(new com.modpanel.discovery.TomlProvider());
 		com.modpanel.ModPanel.DISCOVERY.registerProvider(new com.modpanel.discovery.LibraryProvider());
+		com.modpanel.ModPanel.DISCOVERY.registerProvider(new com.modpanel.discovery.SupportedModsProvider());
 		com.modpanel.ModPanel.ADAPTER_MANAGER.register(new com.modpanel.adapter.LithiumAdapter());
+		for (com.modpanel.adapter.ModConfigFile spec : com.modpanel.supported.SupportedMods.FILES) {
+			if (spec.hasFile()) com.modpanel.ModPanel.ADAPTER_MANAGER.register(new com.modpanel.adapter.FileConfigAdapter(spec));
+			var sources = com.modpanel.ModPanel.DISCOVERY.discoverMod(spec.modId(), com.modpanel.ModPanel.MOD_REGISTRY.getVersion(spec.modId()));
+			ModPanel.LOGGER.info("Supported mod {}: {}", spec.displayName(),
+					sources.isEmpty() ? "not installed" : sources.get(0).getStatus() + " " + sources.get(0).getLocation());
+		}
 		com.modpanel.ModPanel.ADAPTER_MANAGER.register(new com.modpanel.adapter.GenericPropertiesAdapter());
 		com.modpanel.ModPanel.ADAPTER_MANAGER.register(new com.modpanel.adapter.GenericColonAdapter());
 		com.modpanel.ModPanel.ADAPTER_MANAGER.register(new com.modpanel.adapter.GenericJsonAdapter());

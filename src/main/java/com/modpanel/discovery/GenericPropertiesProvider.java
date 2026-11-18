@@ -15,14 +15,15 @@ public class GenericPropertiesProvider implements DiscoveryProvider {
     @Override public int priority() { return 5; }
     @Override
     public boolean supports(String modId) {
-        return Files.exists(Paths.get("config", modId + ".properties"));
+        return !com.modpanel.supported.SupportedMods.isHandled(modId)
+                && Files.exists(Paths.get("config", modId + ".properties"));
     }
     @Override
     public List<ConfigSource> discover(String modId, String version) {
         List<ConfigSource> out = new ArrayList<>();
         if (supports(modId)) {
             ConfigCapabilities caps = ConfigCapabilities.readOnly();
-            out.add(new ConfigSource(modId, modId + ":properties", "properties", version, caps, DiscoveryResult.Status.READ_ONLY, new ArrayList<>()));
+            out.add(new ConfigSource(modId, modId + ":properties", "properties", version, caps, DiscoveryResult.Status.READ_ONLY, new ArrayList<>(), "config/" + modId + ".properties"));
         }
         return out;
     }

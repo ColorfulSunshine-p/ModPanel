@@ -13,11 +13,14 @@ import java.util.List;
 public class GenericTomlProvider implements DiscoveryProvider {
     @Override public String id() { return "generic-toml"; }
     @Override public int priority() { return 5; }
-    @Override public boolean supports(String modId) { return Files.exists(Paths.get("config", modId + ".toml")); }
+    @Override public boolean supports(String modId) {
+        return !com.modpanel.supported.SupportedMods.isHandled(modId)
+                && Files.exists(Paths.get("config", modId + ".toml"));
+    }
     @Override public List<ConfigSource> discover(String modId, String version) {
         List<ConfigSource> out = new ArrayList<>();
         if (supports(modId)) {
-            out.add(new ConfigSource(modId, modId + ":toml", "toml", version, ConfigCapabilities.readOnly(), DiscoveryResult.Status.READ_ONLY, new ArrayList<>()));
+            out.add(new ConfigSource(modId, modId + ":toml", "toml", version, ConfigCapabilities.readOnly(), DiscoveryResult.Status.READ_ONLY, new ArrayList<>(), "config/" + modId + ".toml"));
         }
         return out;
     }
